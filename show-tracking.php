@@ -1,4 +1,3 @@
-
 // ثبت اسکریپت‌های مورد نیاز
 function order_tracking_enqueue_scripts() {
     wp_enqueue_script('jquery');
@@ -143,6 +142,26 @@ function display_order_tracking_form() {
         display: inline-block;
         margin: 0 5px;
     }
+    /* مدیا کوئری‌ها برای واکنش‌گرایی */
+    @media (max-width: 768px) {
+        .order-tracking-form-container {
+            padding: 15px;
+        }
+        .form-group input,
+        .button {
+            font-size: 14px;
+        }
+    }
+    @media (max-width: 480px) {
+        .order-tracking-form-container {
+            padding: 10px;
+        }
+        .form-group input,
+        .button {
+            font-size: 12px;
+            padding: 10px;
+        }
+    }
 </style>
 
     <script type="text/javascript">
@@ -224,21 +243,28 @@ function handle_order_tracking_check() {
         ]);
     }
 
+    $transient_key = 'order_tracking_' . $order_number . '_' . $phone_last4;
+    $cached_response = get_transient($transient_key);
+
+    if ($cached_response !== false) {
+        wp_send_json($cached_response);
+    }
+
     $order = wc_get_order($order_number);
     
     if (!$order) {
-        wp_send_json_error([
-            'message' => 'سفارشی با این شماره یافت نشد.'
-        ]);
+        $response = ['success' => false, 'data' => ['message' => 'سفارشی با این شماره یافت نشد.']];
+        set_transient($transient_key, $response, HOUR_IN_SECONDS);
+        wp_send_json($response);
     }
 
     $order_phone = $order->get_billing_phone();
     $order_phone_last4 = substr(preg_replace('/[^0-9]/', '', $order_phone), -4);
 
     if ($order_phone_last4 !== $phone_last4) {
-        wp_send_json_error([
-            'message' => '4 رقم آخر شماره موبایل وارد شده صحیح نیست.'
-        ]);
+        $response = ['success' => false, 'data' => ['message' => '4 رقم آخر شماره موبایل وارد شده صحیح نیست.']];
+        set_transient($transient_key, $response, HOUR_IN_SECONDS);
+        wp_send_json($response);
     }
 
     $customer_first_name = $order->get_billing_first_name();
@@ -259,19 +285,36 @@ function handle_order_tracking_check() {
             $tracking_link,
             esc_html($tracking_id)
         );
-        wp_send_json_success(['message' => $message]);
+        $response = ['success' => true, 'data' => ['message' => $message]];
+        set_transient($transient_key, $response, DAY_IN_SECONDS);
+        wp_send_json($response);
     } else {
         $order_status = wc_get_order_status_name($order->get_status());
-        $message = sprintf(
-            '%s عزیز،<br>
-            وضعیت سفارش شما به مقصد %s: <strong>%s</strong><br>
-            <small>کد رهگیری پستی هنوز ثبت نشده است. به محض آماده شدن سفارش و ثبت کد رهگیری، 
-            از طریق پیامک به شما اطلاع‌رسانی خواهد شد.</small>',
-            esc_html($customer_name),
-            esc_html($customer_city),
-            $order_status
-        );
-        wp_send_json_error(['message' => $message]);
+        if ($order->get_status() == 'pws-ready-to-ship') {
+            $message = sprintf(
+                '%s عزیز،<br>
+                سفارش شما به مقصد %s به پست داده شده و به سمت مقصد حرکت کرده است. به زودی کد رهگیری ارسال می‌شود.<br>
+                <small>لطفاً منتظر دریافت پیامک با کد رهگیری باشید.</small>',
+                esc_html($customer_name),
+                esc_html($customer_city)
+            );
+            $response = ['success' => true, 'data' => ['message' => $message]];
+            set_transient($transient_key, $response, DAY_IN_SECONDS);
+            wp_send_json($response);
+        } else {
+            $message = sprintf(
+                '%s عزیز،<br>
+                وضعیت سفارش شما به مقصد %s: <strong>%s</strong><br>
+                <small>کد رهگیری پستی هنوز ثبت نشده است. به محض آماده شدن سفارش و ثبت کد رهگیری، 
+                از طریق پیامک به شما اطلاع‌رسانی خواهد شد.</small>',
+                esc_html($customer_name),
+                esc_html($customer_city),
+                $order_status
+            );
+            $response = ['success' => true, 'data' => ['message' => $message]];
+            set_transient($transient_key, $response, DAY_IN_SECONDS);
+            wp_send_json($response);
+        }
     }
 }
 
@@ -285,6 +328,7 @@ function get_persian_order_status($status) {
         'cancelled' => 'لغو شده',
         'refunded' => 'مسترد شده',
         'failed' => 'ناموفق',
+        'pws-ready-to-ship' => 'آماده به پست',
     ];
     return isset($statuses[$status]) ? $statuses[$status] : $status;
 }
